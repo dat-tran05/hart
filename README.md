@@ -1,3 +1,21 @@
+# HART for Apple Silicon
+
+This fork of [MIT HAN Lab&#39;s HART](https://github.com/mit-han-lab/hart)
+explores inference support and optimizations for Apple Silicon Macs
+as part of MIT 6.5940.
+
+Our goals are to:
+
+- Enable image generation on Apple Silicon using PyTorch MPS.
+- Optimize inference latency and memory usage.
+- Evaluate image quality and runtime performance against a baseline.
+
+**Status:** Mac runtime support is under development. The original
+installation instructions below target NVIDIA CUDA.
+
+The original HART paper, implementation, and pretrained models are
+credited to the authors listed below.
+
 # HART: Efficient Visual Generation with Hybrid Autoregressive Transformer
 
 \[[Paper](https://arxiv.org/abs/2410.10812)\] \[[Demo](https://hart.mit.edu)\] \[[Project](https://hanlab.mit.edu/projects/hart)\]
@@ -55,7 +73,7 @@ You may launch the Gradio demo using the following script:
 ```bash
 python app.py ---model_path /path/to/model \
    --text_model_path /path/to/Qwen2 \
-   --shield_model_path /path/to/ShieldGemma2B 
+   --shield_model_path /path/to/ShieldGemma2B
 ```
 
 Please notice that for model_path, please point it to the `llm` folder under our pretrained checkpoint. For example, if your model is stored at `checkpoints/hart-0.7b-1024px`, then `model_path` should be `checkpoints/hart-0.7b-1024px/llm`. Similar for all commands below.
