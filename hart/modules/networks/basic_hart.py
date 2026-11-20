@@ -7,7 +7,10 @@ import functools
 import math
 from typing import Tuple, Union
 
-import hart_backend.fused_kernels
+try:
+    import hart_backend.fused_kernels
+except ImportError:
+    hart_backend = None # guard for mps
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,6 +32,7 @@ __all__ = [
 
 
 # automatically import fused operators
+xformers = None # guard for mps
 dropout_add_layer_norm = fused_mlp_func = memory_efficient_attention = (
     flash_attn_func
 ) = None
@@ -373,13 +377,7 @@ class FusedLlamaRotaryEmbedding2DWithPos(nn.Module):
                 0, 3, 1, 2
             ).contiguous()
 
-            device_type = x.device.type
-            device_type = (
-                device_type
-                if isinstance(device_type, str) and device_type != "mps"
-                else "cpu"
-            )
-            with torch.autocast(device_type=device_type, enabled=False):
+            with torch.autocast(device_type=x.device.type, enabled=False):
                 # freqs: [bs, 2, seq_len, head_size // 4]
                 freqs = (
                     inv_freq_expanded.float() @ position_ids_expanded.float()
@@ -497,6 +495,10 @@ class LlamaRMSNormFused(nn.Module):
             if self.use_quant
             else torch.empty_like(x)
         )
+        if x.device.type != "cuda" or hart_backend is None:
+            variance = x.float().square().mean(dim=-1, keepdim=True)
+            normalized = x.float() * torch.rsqrt(variance + self.variance_epsilon)
+            return (normalized.to(x.dtype) * self.weight.to(x.dtype)).to(x.dtype)
         self.weight.data = self.weight.data.to(x)
         hart_backend.fused_kernels.rms_norm(
             out, x, self.weight.data, self.variance_epsilon, self.use_quant
@@ -545,13 +547,7 @@ class LlamaRotaryEmbedding1D(nn.Module):
 
         # Force float32 since bfloat16 loses precision on long contexts
         # See https://github.com/huggingface/transformers/pull/29285
-        device_type = x.device.type
-        device_type = (
-            device_type
-            if isinstance(device_type, str) and device_type != "mps"
-            else "cpu"
-        )
-        with torch.autocast(device_type=device_type, enabled=False):
+        with torch.autocast(device_type=x.device.type, enabled=False):
             # freqs: [bs, seq_len, head_size // 2]
             freqs = (
                 inv_freq_expanded.float() @ position_ids_expanded.float()
@@ -610,13 +606,7 @@ class LlamaRotaryEmbedding(nn.Module):
 
         # Force float32 since bfloat16 loses precision on long contexts
         # See https://github.com/huggingface/transformers/pull/29285
-        device_type = x.device.type
-        device_type = (
-            device_type
-            if isinstance(device_type, str) and device_type != "mps"
-            else "cpu"
-        )
-        with torch.autocast(device_type=device_type, enabled=False):
+        with torch.autocast(device_type=x.device.type, enabled=False):
             # freqs: [bs, 2, seq_len, head_size // 4]
             freqs = (
                 inv_freq_expanded.float() @ position_ids_expanded.float()
@@ -672,9 +662,15 @@ class MultiHeadCrossAttention(nn.Module):
         if mask is not None:
             raise NotImplementedError
             attn_bias = xformers.ops.fmha.BlockDiagonalMask.from_seqlens([N] * B, mask)
-        x = xformers.ops.memory_efficient_attention(
-            q, k, v, p=self.attn_drop.p, attn_bias=attn_bias
-        )
+        if xformers is not None and x.device.type == "cuda":
+            x = xformers.ops.memory_efficient_attention(
+                q, k, v, p=self.attn_drop.p, attn_bias=attn_bias
+            )
+        else:
+            x = F.scaled_dot_product_attention(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+            ).transpose(1, 2)
 
         x = x.view(B, -1, C)
         x = self.proj(x)

@@ -163,6 +163,8 @@ cython_debug/
 *.csv
 
 ckpts/
+checkpoints/
+samples/
 wandb/
 wandb/*
 
