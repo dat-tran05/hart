@@ -40,7 +40,7 @@ class HARTHybridQuantizer(VARQuantizer):
 
         idx_list = []
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.autocast(device_type=f_BChw.device.type, enabled=False):
             mean_vq_loss: torch.Tensor = 0.0
             vocab_hit_V = torch.zeros(
                 self.vocab_size, dtype=torch.float, device=f_BChw.device
@@ -196,11 +196,19 @@ class HARTHybridQuantizer(VARQuantizer):
                 F.interpolate(h_BChw, size=(HW, HW), mode="bicubic")
             )  # conv after upsample
             f_hat.add_(h)
-            return f_hat, F.interpolate(
-                f_hat,
-                size=(patch_nums[si + 1], patch_nums[si + 1]),
-                mode="area",
-            )
+            next_size = patch_nums[si + 1]
+            # MPS cannot area-resize non-divisible dims => use CPU
+            if f_hat.device.type == "mps" and (
+                f_hat.shape[-2] % next_size or f_hat.shape[-1] % next_size
+            ):
+                resized = F.interpolate(
+                    f_hat.float().cpu(), size=(next_size, next_size), mode="area"
+                ).to(device=f_hat.device, dtype=f_hat.dtype)
+            else:
+                resized = F.interpolate(
+                    f_hat, size=(next_size, next_size), mode="area"
+                )
+            return f_hat, resized
         else:
             h = h_BChw
             f_hat.add_(h)
